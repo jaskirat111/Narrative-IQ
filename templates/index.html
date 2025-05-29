@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Narrative IQ</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@1.4.0"></script>
+
+</head>
+<body>
+  <h1>📊 Narrative IQ</h1>
+
+  <form id="reportForm">
+    <input type="text" placeholder="Report Title" name="title" required><br>
+    <textarea name="data" placeholder="Paste your raw data here..." rows="8" required></textarea><br>
+    <button type="submit">Generate Report</button>
+  </form>
+
+  <h2>📝 Generated Narrative</h2>
+  <div id="output"></div>
+   <h2>📋 Key Performance Indicators (KPIs)</h2>
+  <ul id="kpis"></ul>
+  <h2>📈 Data Visualization</h2>
+  <canvas id="chartCanvas" width="400" height="200"></canvas>
+  <h2>📂 Past Reports</h2>
+  <ul id="history"></ul>
+
+ <script>
+  let chartInstance = null;
+  document.getElementById("reportForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const rawData = formData.get("data");
+
+    const response = await fetch("/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: formData.get("title"),
+        data: rawData
+      })
+    });
+
+    const result = await response.json();
+    document.getElementById("output").innerText = result.narrative;
+    // Try to parse and visualize the data
+    try {
+      const jsonData = JSON.parse(rawData);
+      displayKPIs(jsonData);
+      renderChartFromData(jsonData, result.anomalies || []);
+    } catch (err) {
+      console.error("Invalid JSON for visualization.");
+      alert("Visualization failed: Invalid JSON structure.");
+    }
+
+    loadHistory();
+  });
+
+  function renderChartFromData(data, anomalies = []) {
+  const innings = data.innings?.[0];
+  if (!innings) return;
+
+  const overs = innings.overs;
+  const labels = [];
+  const runsPerOver = [];
+
+  overs.forEach(over => {
+    const deliveries = over.deliveries;
+    let overTotal = 0;
+
+    deliveries.forEach(ball => {
+      overTotal += ball.runs?.total || 0;
+    });
+
+    labels.push(`Over ${over.over}`);
+    runsPerOver.push(overTotal);
+  });
+  // ✅ Add Annotations Based on Detected Anomalies
+  const annotations = anomalies.map(a => ({
+    type: 'line',
+    scaleID: 'x',
+    value: `Over ${a.over}`,
+    borderColor: a.type === 'spike' ? 'green' : 'red',
+    borderWidth: 2,
+    label: {
+      content: `${a.type.toUpperCase()}: ${a.change}`,
+      enabled: true,
+      position: 'top'
+    }
+  }));
+  const ctx = document.getElementById("chartCanvas").getContext("2d");
+  if (chartInstance) chartInstance.destroy();
+
+  chartInstance = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: labels,
+      datasets: [{
+        label: "Runs per Over",
+        data: runsPerOver,
+        borderColor: "blue",
+        backgroundColor: "rgba(0, 123, 255, 0.2)",
+        fill: true,
+        tension: 0.3
+      }]
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true }
+      },
+      plugins: {
+        annotation: {
+          annotations: annotations
+        }
+      }
+    },
+    plugins: [Chart.registry.getPlugin('annotation')]
+  });
+}
+  function displayKPIs(data) {
+    const innings = data.innings[0];
+    const overs = innings.overs;
+    const totalRuns = overs.reduce((sum, over) => {
+      return sum + over.deliveries.reduce((oSum, ball) => oSum + (ball.runs?.total || 0), 0);
+    }, 0);
+    const maxOver = Math.max(...overs.map(o => o.over));
+    const runRate = (totalRuns / (maxOver + 1)).toFixed(2);
+
+    const kpiList = document.getElementById("kpis");
+    kpiList.innerHTML = `
+      <li><strong>Total Runs:</strong> ${totalRuns}</li>
+      <li><strong>Max Over:</strong> ${maxOver}</li>
+      <li><strong>Run Rate:</strong> ${runRate} runs/over</li>
+    `;
+  }
+  
+  async function loadHistory() {
+    const response = await fetch("/history");
+    const reports = await response.json();
+    const historyEl = document.getElementById("history");
+    historyEl.innerHTML = "";
+    reports.forEach(r => {
+      const li = document.createElement("li");
+      li.textContent = `[${r.timestamp}] ${r.title}: ${r.narrative.substring(0, 100)}...`;
+      historyEl.appendChild(li);
+    });
+  }
+
+  loadHistory();
+</script>
+</body>
+</html>
